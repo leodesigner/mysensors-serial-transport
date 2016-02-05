@@ -28,6 +28,9 @@
  * of the authors and should not be interpreted as representing official policies,
  * either expressed or implied, of Majenko Technologies.
  ********************************************************************************/
+ 
+// for debugging
+//#define	STDEBUG
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #include <Arduino.h>
@@ -172,36 +175,6 @@ boolean MyTransportSerial::isend(unsigned char station, char command, char data)
   return isend(station,command,sizeof(data),(char *)&data);
 }
 
-//Broadcast data to all stations
-boolean MyTransportSerial::broadcast(char command, unsigned char len, char *data)
-{
-  return isend(ICSC_BROADCAST,command,len,data);
-}
-
-//BroadCast a string to all Stations
-boolean MyTransportSerial::broadcast(char command, char *str)
-{
-  return isend(ICSC_BROADCAST,command,(unsigned char)strlen(str),str);
-}
-
-//Wrapper for broadcasting a long
-boolean MyTransportSerial::broadcast(char command, long data)
-{
-  return isend(ICSC_BROADCAST,command,sizeof(data),(char *)&data);
-}
-
-//Wrapper for broadcasting a int
-boolean MyTransportSerial::broadcast(char command, int data)
-{
-  return isend(ICSC_BROADCAST,command,sizeof(data),(char *)&data);
-}
-
-//Wrapper for broadcasting a single char
-boolean MyTransportSerial::broadcast(char command, char data)
-{
-  return isend(ICSC_BROADCAST,command,sizeof(data),(char *)&data);
-}
-
 //Reset the state machine and release the data pointer
 void MyTransportSerial::reset(){
   _recPhase = 0;
@@ -225,13 +198,23 @@ void MyTransportSerial::reset(){
 // function.
 boolean MyTransportSerial::process()
 {
-    char inch;
+    unsigned char inch;
+	int	sdata;
     unsigned char i;
     unsigned char cbok = 0;
     if (!_dev->available()) return false;
 
     while(_dev->available()) {
-        inch = _dev->read();
+        //delayMicroseconds(10);
+		sdata = _dev->read();
+		if (sdata == -1) { return false; }
+        inch = sdata;
+		#ifdef STDEBUG
+		_dev->print(inch,HEX);
+		_dev->print("-");
+		_dev->write(inch);
+		_dev->print(":");
+		#endif
 
         // Record the timestamp of this byte, so that we know how long since we last
         // saw any activity on the line
@@ -259,6 +242,16 @@ boolean MyTransportSerial::process()
                     _recPhase = 1;
                     _recPos = 0;
 
+					#ifdef STDEBUG
+					_dev->println("");
+					_dev->print("Header: ");
+					for (i=0; i<=4; i++) {
+                        _dev->print(_header[i],HEX);
+						_dev->print(".");
+                    }
+					_dev->println("");
+					#endif
+					
                     //Check if we should process this message
                     //We reject the message if we are the sender
                     //We reject if we are not the receiver and message is not a broadcast
@@ -266,10 +259,10 @@ boolean MyTransportSerial::process()
                         (_recStation != _station &&
                          _recStation != ICSC_BROADCAST &&
                          _recStation != ICSC_SYS_RELAY )) {
-						_dev->print(" wrongid: ");
-						_dev->print(_recStation);
-						_dev->print(" - ");
-						_dev->println(_station);
+					//	_dev->print(" wrongid: ");
+					//	_dev->print(_recStation);
+					//	_dev->print(" - ");
+					//	_dev->println(_station);
                         reset();
                         break;
                     }
@@ -303,6 +296,10 @@ boolean MyTransportSerial::process()
                 if (_recPos == _recLen) {
                     _recPhase = 2;
                 }
+				#ifdef STDEBUG
+					_dev->print(inch,HEX);
+					_dev->print(":");
+				#endif
                 break;
 
             // After the data comes a single ETX character.  Do we have it?  If not,
@@ -311,6 +308,10 @@ boolean MyTransportSerial::process()
                 // Packet properly terminated?
                 if (inch == ETX) {
                     _recPhase = 3;
+					#ifdef STDEBUG
+						_dev->println("");
+						_dev->println("ETX");
+					#endif
                 } else {
                     reset();
                 }
@@ -329,8 +330,11 @@ boolean MyTransportSerial::process()
             case 4:
                 cbok = 0;
                 if (inch == EOT) {
-					//_dev->println(_recCS,HEX);
-					//_dev->println(_recCalcCS,HEX);
+					#ifdef STDEBUG
+						_dev->println("EOT CS: ");
+						_dev->println(_recCS,HEX);
+						_dev->println(_recCalcCS,HEX);
+					#endif
                     if (_recCS == _recCalcCS) {
 
 
@@ -338,6 +342,11 @@ boolean MyTransportSerial::process()
                         // to register your own callback as well for system level
                         // commands which will be called after the system default
                         // hook.
+						#ifdef STDEBUG
+							_dev->println("CS OK, Command: ");
+							_dev->println(_recCommand,HEX);
+							_dev->println(_recLen,HEX);
+						#endif
 
                         switch (_recCommand) {
                             case ICSC_SYS_PING:
@@ -354,24 +363,6 @@ boolean MyTransportSerial::process()
                         }
 
 
-                      #ifdef ICSC_DYNAMIC
-                        for (i=0; i<_commandCount; i++) {
-                      #else
-                        for (i=0; i<MAX_COMMANDS; i++) {
-                      #endif
-                            if ((_commands[i].commandCode == _recCommand ||
-                                 _commands[i].commandCode == ICSC_CATCH_ALL )
-                               && _commands[i].callback)
-                            {
-								_dev->println(_recLen,DEC);
-								_dev->println(_recSender,DEC);
-                                _commands[i].callback(_recSender, _recCommand, _recLen, _data);
-                                #ifndef ICSC_NO_STATS
-                                _stats.cb_run++;
-                                #endif
-                                cbok = 1;
-                            }
-                        }
                #ifndef ICSC_NO_STATS
                         if (cbok == 0) {
                             _stats.cb_bad++;
@@ -395,72 +386,6 @@ boolean MyTransportSerial::process()
     return true;
 }
 
-// Add a new command code / function pair into the list of
-// registered commands.  If there is no room, fail silently.
-void MyTransportSerial::registerCommand(char command, callbackFunction func)
-{
-    unsigned char i;
-
-#ifdef ICSC_DYNAMIC
-
-    // Check if we should update the function
-    for (i=0; i<_commandCount; i++) {
-        if (_commands[i].commandCode == command) {
-            _commands[i].callback = func;
-            return;
-        }
-    }
-
-    // Not Found add a new command
-    _commandCount++;
-    _commands = (command_ptr)realloc(_commands,_commandCount * sizeof(command_t));
-    _commands[i].commandCode=command;
-    _commands[i].callback = func;
-
-#else
-
-    for (i=0; i<MAX_COMMANDS; i++) {
-        if (_commands[i].commandCode == 0) {
-            _commands[i].commandCode = command;
-            _commands[i].callback = func;
-			_dev->print("New command registered: ");
-			_dev->print(command);
-            return;
-        }
-    }
-
-#endif
-}
-
-// Look for a registered command and delete it from the
-// list if found.  If not found, silently fail.
-void MyTransportSerial::unregisterCommand(char command)
-{
-    unsigned char i;
-
-#ifdef ICSC_DYNAMIC
-
-    for (i=0; i<_commandCount; i++) {
-        if (_commands[i].commandCode == command) {
-            _commandCount--;
-            memcpy(&_commands[i],&_commands[i+1],(_commandCount-i) * sizeof(command_t));
-            _commands=(command_ptr) realloc(_commands,_commandCount * sizeof(command_t));
-            return;
-        }
-    }
-
-#else
-
-    for (i=0; i<MAX_COMMANDS; i++) {
-        if (_commands[i].commandCode == command) {
-            _commands[i].commandCode = 0;
-            _commands[i].callback = NULL;
-            return;
-        }
-    }
-
-#endif
-}
 
 // This is a bit of a fudge at the moment as many different versions
 // of the different core code from the different chips provides

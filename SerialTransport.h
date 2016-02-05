@@ -62,14 +62,8 @@
 // size of packets that can be received - you can always send
 // up to 255 bytes.  If the remote end can't receive them all
 // the packet will be silently discarded.
-#define MAX_MESSAGE 40
+#define MAX_MESSAGE 42
 
-// The maximum number of registered commands.  If you're not
-// going to have many commands reducing this can save memory.
-// If you want lots of commands you may need to increase this
-// value.  Note that this ony affects the commands registerable
-// at the receiving end
-#define MAX_COMMANDS 10
 #endif
 
 //If this StationId is used during send(broadcast)
@@ -85,7 +79,6 @@
 #define ICSC_SYS_QSTAT  0x07
 #define ICSC_SYS_RSTAT  0x08
 #define	ICSC_SYS_PACK	0x58 // X
-#define	ICSC_SYS_ACK	0x78 // x
 
 //Used when message is relayed to other station via a other station
 #define ICSC_SYS_RELAY  0x09
@@ -98,7 +91,7 @@
 //The number of SOH to start a message
 //some device like Raspberry was missing the first SOH
 //Increase or decrease the number to your needs
-#define ICSC_SOH_START_COUNT 1
+#define ICSC_SOH_START_COUNT 3
 
 // Format of command callback functions
 typedef void(*callbackFunction)(unsigned char, char, unsigned char, char *);
@@ -130,19 +123,10 @@ class MyTransportSerial : public MyTransport
     private:
       #ifdef ICSC_DYNAMIC
 
-        // The number of commands registered
-        uint8_t _commandCount;
-
-        // The registered commands
-        command_ptr _commands;
-
         // Receiving data buffer
         char* _data;
 
       #else
-
-        // The registered commands
-        command_t _commands[MAX_COMMANDS];
 
         // Receiving data buffer
         char _data[MAX_MESSAGE];
@@ -221,14 +205,7 @@ class MyTransportSerial : public MyTransport
         boolean isend(unsigned char station, char command, long data);
         boolean isend(unsigned char station, char command, int data);
         boolean isend(unsigned char station, char command, char data);
-        boolean broadcast(char command, unsigned char len=0, char *data=NULL);
-        boolean broadcast(char command, char *str);
-        boolean broadcast(char command, long data);
-        boolean broadcast(char command, int data);
-        boolean broadcast(char command, char data);
         boolean process();
-        void registerCommand(char command, callbackFunction func);
-        void unregisterCommand(char command);
       #ifndef ICSC_NO_STATS
         stats_ptr stats();
       #endif
